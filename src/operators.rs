@@ -71,7 +71,30 @@ pub fn masked_softmax(y: &mut Tensor<f32>) {
 }
 
 pub fn rms_norm(y: &mut Tensor<f32>, x: &Tensor<f32>, w: &Tensor<f32>, epsilon: f32) {
-    todo!("实现 rms_norm，计算前做一些必要的检查会帮助你后续调试")
+    // todo!("实现 rms_norm，计算前做一些必要的检查会帮助你后续调试")
+    let shape_x = x.shape();
+    let shape_w = w.shape();
+    assert_eq!(
+        shape_x.len(),
+        shape_w.len() + 1,
+        "Shape mismatch between x and w"
+    );
+
+    let x_data = x.data();
+    let w_data = w.data();
+    let y_data = unsafe { y.data_mut() };
+
+    for i in 0..shape_x[0] {
+        let mut rms = 0.0;
+        for j in 0..shape_x[0] {
+            rms += x_data[i * shape_w[0] + j].powi(2);
+        }
+        rms = (rms / shape_x[0] as f32 + epsilon).sqrt();
+
+        for j in 0..shape_w[0] {
+            y_data[i * shape_w[0] + j] = (x_data[i * shape_w[0] + j] / rms) * w_data[j];
+        }
+    }
 }
 
 // y = sigmoid(x) * x * y
@@ -83,13 +106,49 @@ pub fn silu(y: &mut Tensor<f32>, x: &Tensor<f32>) {
     // let _y = unsafe { y.data_mut() };
     // let _x = x.data();
 
-    todo!("实现 silu，这里给了一些前期准备工作的提示，你可以参考")
+    // todo!("实现 silu，这里给了一些前期准备工作的提示，你可以参考")
+    let len = y.size();
+    assert_eq!(len, x.size(), "Size of y and x should be equal");
+
+    let y_data = unsafe { y.data_mut() };
+    let x_data = x.data();
+
+    for i in 0..len {
+        let sigmoid = 1.0 / (1.0 + (-x_data[i].exp()));
+        y_data[i] = sigmoid * x_data[i];
+    }
 }
 
 // C = beta * C + alpha * A @ B^T
 // hint: You don't need to do an explicit transpose of B
 pub fn matmul_transb(c: &mut Tensor<f32>, beta: f32, a: &Tensor<f32>, b: &Tensor<f32>, alpha: f32) {
-    todo!("实现 matmul_transb，计算前做一些必要的检查会帮助你后续调试");
+    // todo!("实现 matmul_transb，计算前做一些必要的检查会帮助你后续调试");
+    let shape_a = a.shape().to_vec();
+    let shape_b = b.shape().to_vec();
+    let shape_c = c.shape().to_vec();
+
+    assert_eq!(
+        shape_a[0], shape_c[0],
+        "A's row count should match C's row count"
+    );
+    assert_eq!(
+        shape_b[0], shape_c[1],
+        "B's row count should match C's column count"
+    );
+
+    let a_data = a.data();
+    let b_data = b.data();
+    let c_data = unsafe { c.data_mut() };
+
+    for i in 0..shape_c[0] {
+        for j in 0..shape_c[1] {
+            let mut sum = 0.0;
+            for k in 0..shape_a[1] {
+                sum += a_data[i * shape_a[1] + k] * b_data[j * shape_b[1] + k];
+            }
+            c_data[i * shape_c[1] + j] = beta * c_data[i * shape_c[1] + j] + alpha * sum;
+        }
+    }
 }
 
 // Dot product of two tensors (treated as vectors)

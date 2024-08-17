@@ -86,10 +86,10 @@ pub fn rms_norm(y: &mut Tensor<f32>, x: &Tensor<f32>, w: &Tensor<f32>, epsilon: 
 
     for i in 0..shape_x[0] {
         let mut rms = 0.0;
-        for j in 0..shape_x[0] {
+        for j in 0..shape_w[0] {
             rms += x_data[i * shape_w[0] + j].powi(2);
         }
-        rms = (rms / shape_x[0] as f32 + epsilon).sqrt();
+        rms = (rms / shape_w[0] as f32 + epsilon).sqrt();
 
         for j in 0..shape_w[0] {
             y_data[i * shape_w[0] + j] = (x_data[i * shape_w[0] + j] / rms) * w_data[j];
@@ -115,41 +115,111 @@ pub fn silu(y: &mut Tensor<f32>, x: &Tensor<f32>) {
     let x_data = x.data();
 
     for i in 0..len {
-        let sigmoid = 1.0 / (1.0 + (-x_data[i].exp()));
-        y_data[i] = sigmoid * x_data[i];
+        let x_data = x_data[i];
+        y_data[i] *= x_data / (1. + (-x_data).exp());
     }
 }
 
 // C = beta * C + alpha * A @ B^T
 // hint: You don't need to do an explicit transpose of B
 pub fn matmul_transb(c: &mut Tensor<f32>, beta: f32, a: &Tensor<f32>, b: &Tensor<f32>, alpha: f32) {
-    // todo!("实现 matmul_transb，计算前做一些必要的检查会帮助你后续调试");
-    let shape_a = a.shape().to_vec();
-    let shape_b = b.shape().to_vec();
-    let shape_c = c.shape().to_vec();
+    let c_ = mat_mul(a, &transpose(b));
+    let c_ = f32_mul_mat(alpha, &c_);
+    let c_ = mat_add(&f32_mul_mat(beta, c), &c_);
+    copy_mat(c, &c_);
+}
 
-    assert_eq!(
-        shape_a[0], shape_c[0],
-        "A's row count should match C's row count"
-    );
-    assert_eq!(
-        shape_b[0], shape_c[1],
-        "B's row count should match C's column count"
-    );
-
-    let a_data = a.data();
-    let b_data = b.data();
-    let c_data = unsafe { c.data_mut() };
-
-    for i in 0..shape_c[0] {
-        for j in 0..shape_c[1] {
-            let mut sum = 0.0;
-            for k in 0..shape_a[1] {
-                sum += a_data[i * shape_a[1] + k] * b_data[j * shape_b[1] + k];
+// Copy the data from a to c
+pub fn copy_mat(c: &mut Tensor<f32>, a: &Tensor<f32>) {
+    let c_shape = c.shape();
+    let a_shape = a.shape();
+    assert!(c_shape == a_shape);
+    let m = c_shape[0];
+    let n = c_shape[1];
+    for i in 0..m {
+        for j in 0..n {
+            unsafe {
+                c.data_mut()[i * n + j] = a.data()[i * n + j];
             }
-            c_data[i * shape_c[1] + j] = beta * c_data[i * shape_c[1] + j] + alpha * sum;
         }
     }
+}
+
+// 对张量进行逐元素的标量乘法运算
+pub fn f32_mul_mat(beta: f32, a: &Tensor<f32>) -> Tensor<f32> {
+    let a_shape = a.shape();
+    let m = a_shape[0];
+    let n = a_shape[1];
+    let mut c = Tensor::<f32>::new(vec![0.0; m * n], &vec![m, n]);
+    for i in 0..m {
+        for j in 0..n {
+            unsafe {
+                c.data_mut()[i * n + j] = beta * a.data()[i * n + j];
+            }
+        }
+    }
+    c
+}
+
+// Element-wise addition of two tensors of the same shape
+// return A + B
+pub fn mat_add(a: &Tensor<f32>, b: &Tensor<f32>) -> Tensor<f32> {
+    let a_shape = a.shape();
+    let b_shape = b.shape();
+    assert!(a_shape == b_shape);
+    let m = a_shape[0];
+    let n = a_shape[1];
+    let mut c = Tensor::<f32>::new(vec![0.0; m * n], &vec![m, n]);
+    for i in 0..m {
+        for j in 0..n {
+            unsafe {
+                c.data_mut()[i * n + j] = a.data()[i * n + j] + b.data()[i * n + j];
+            }
+        }
+    }
+    c
+}
+
+// Matrix multiplication of two tensors
+// return  A * B
+pub fn mat_mul(x: &Tensor<f32>, y: &Tensor<f32>) -> Tensor<f32> {
+    let x_shape = x.shape();
+    let y_shape = y.shape();
+    assert!(x_shape.len() == 2);
+    assert!(y_shape.len() == 2);
+    assert!(x_shape[1] == y_shape[0]);
+    let m = x_shape[0];
+    let n = x_shape[1];
+    let k = y_shape[1];
+    let mut z = Tensor::<f32>::new(vec![0.0; m * k], &vec![m, k]);
+    for i in 0..m {
+        for j in 0..k {
+            for l in 0..n {
+                unsafe {
+                    z.data_mut()[i * k + j] += x.data()[i * n + l] * y.data()[l * k + j];
+                }
+            }
+        }
+    }
+    z
+}
+
+// Transpose a 2D tensor  (m, n) -> (n, m) 转置矩阵
+// return the transposition of x
+pub fn transpose(x: &Tensor<f32>) -> Tensor<f32> {
+    let x_shape = x.shape();
+    assert!(x_shape.len() == 2);
+    let m = x_shape[0];
+    let n = x_shape[1];
+    let mut y = Tensor::<f32>::new(vec![0.0; m * n], &vec![n, m]);
+    for i in 0..m {
+        for j in 0..n {
+            unsafe {
+                y.data_mut()[j * m + i] = x.data()[i * n + j];
+            }
+        }
+    }
+    y
 }
 
 // Dot product of two tensors (treated as vectors)

@@ -1,5 +1,6 @@
 use crate::config::LlamaConfigJson;
 use crate::tensor::Tensor;
+use core::slice;
 use safetensors::SafeTensors;
 pub struct LLamaParams<T> {
     // token_id to embedding lookup table
@@ -47,37 +48,39 @@ impl LLamaParams<f32> {
         };
 
         LLamaParams {
-            wv: (0..config.hidden_size)
-                .map(|i| get_tensor(&format!("wv_{}", i)))
+            embedding_table: get_tensor("lm_head.weight"),
+
+            rms_att_w: (0..config.num_hidden_layers)
+                .map(|i| get_tensor(&format!("model.layers.{i}.input_layernorm.weight")))
                 .collect(),
-            wo: (0..config.hidden_size)
-                .map(|i| get_tensor(&format!("wo_{}", i)))
+            wq: (0..config.num_hidden_layers)
+                .map(|i| get_tensor(&format!("model.layers.{i}.self_attn.q_proj.weight")))
                 .collect(),
-            rms_ffn_w: (0..config.hidden_size)
-                .map(|i| get_tensor(&format!("rms_ffn_w_{}", i)))
+            wk: (0..config.num_hidden_layers)
+                .map(|i| get_tensor(&format!("model.layers.{i}.self_attn.k_proj.weight")))
                 .collect(),
-            w_up: (0..config.hidden_size)
-                .map(|i| get_tensor(&format!("w_up_{}", i)))
+            wv: (0..config.num_hidden_layers)
+                .map(|i| get_tensor(&format!("model.layers.{i}.self_attn.v_proj.weight")))
                 .collect(),
-            w_gate: (0..config.hidden_size)
-                .map(|i| get_tensor(&format!("w_gate_{}", i)))
+            wo: (0..config.num_hidden_layers)
+                .map(|i| get_tensor(&format!("model.layers.{i}.self_attn.o_proj.weight")))
                 .collect(),
-            w_down: (0..config.hidden_size)
-                .map(|i| get_tensor(&format!("w_down_{}", i)))
+
+            rms_ffn_w: (0..config.num_hidden_layers)
+                .map(|i| get_tensor(&format!("model.layers.{i}.post_attention_layernorm.weight")))
                 .collect(),
-            rms_out_w: get_tensor("rms_out_w"),
-            lm_head: get_tensor("lm_head"),
-            // 初始化缺少的字段
-            embedding_table: get_tensor("embedding_table"),
-            rms_att_w: (0..config.hidden_size)
-                .map(|i| get_tensor(&format!("rms_att_w_{}", i)))
+            w_up: (0..config.num_hidden_layers)
+                .map(|i| get_tensor(&format!("model.layers.{i}.mlp.up_proj.weight")))
                 .collect(),
-            wk: (0..config.hidden_size)
-                .map(|i| get_tensor(&format!("wk_{}", i)))
+            w_gate: (0..config.num_hidden_layers)
+                .map(|i| get_tensor(&format!("model.layers.{i}.mlp.gate_proj.weight")))
                 .collect(),
-            wq: (0..config.hidden_size)
-                .map(|i| get_tensor(&format!("wq_{}", i)))
+            w_down: (0..config.num_hidden_layers)
+                .map(|i| get_tensor(&format!("model.layers.{i}.mlp.down_proj.weight")))
                 .collect(),
+
+            rms_out_w: get_tensor("model.norm.weight"),
+            lm_head: get_tensor("lm_head.weight"),
         }
     }
 }

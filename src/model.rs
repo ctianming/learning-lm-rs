@@ -3,7 +3,7 @@ use std::vec;
 
 use crate::config::LlamaConfigJson;
 use crate::kvcache::KVCache;
-use crate::operators as OP;
+use crate::operators::{self as OP, matmul_transb};
 use crate::params::LLamaParams;
 use crate::tensor::Tensor;
 use safetensors::SafeTensors;
@@ -101,10 +101,39 @@ impl Llama<f32> {
             let full_k = &mut cache.k_cache(layer, 0); // (total_seq, n_kv_h * dqkv)
             let full_v = &mut cache.v_cache(layer, 0); // (total_seq, n_kv_h * dqkv)
 
-            todo!("self_attention(...)");
-            todo!("down_proj matmul and add residual");
+            // todo!("self_attention(...)");
+            // todo!("down_proj matmul and add residual");
 
-            todo!("mlp(...)");
+            // todo!("mlp(...)");
+            self_attention(
+                &mut hidden_states,
+                &mut att_scores,
+                &q_buf,
+                &full_k,
+                &full_v,
+                self.n_kv_h,
+                n_groups,
+                seq_len,
+                total_seq_len,
+                self.dqkv,
+            );
+
+            // 投影并加上残差
+            let wo = &self.params.wo[layer];
+            OP::matmul_transb(&mut residual, 1.0, &hidden_states, wo, 1.0);
+
+            // MLP 层
+            mlp(
+                &mut residual,
+                &mut hidden_states,
+                &mut gate_buf,
+                &mut up_buf,
+                &self.params.w_up[layer],
+                &self.params.w_down[layer],
+                &self.params.w_gate[layer],
+                &self.params.rms_ffn_w[layer],
+                self.eps,
+            );
         }
 
         // No matter what seq_len, the output is always a 1D vector of length vocab,
@@ -269,41 +298,13 @@ fn mlp(
     // output = itermediate @ down_weight.T
     // residual = output + residual
 
-    // RMS 归一化
-    // 1. 执行 RMS 归一化操作，计算出 hidden_states
     OP::rms_norm(hidden_states, residual, rms_w, eps);
-
-    // 2. 计算 gate = hidden_states @ w_gate.T
-    OP::matmul_transb(gate, 0.0, hidden_states, w_gate, 1.0);
-
-    // 3. 计算 up = hidden_states @ w_up.T
-    OP::matmul_transb(up, 0.0, hidden_states, w_up, 1.0);
-
-    // 4. 计算 gate = gate * sigmoid(gate) 使用 SiLU 函数
-    let mut temp_gate = Tensor::new(vec![0.0; gate.size()], gate.shape()); // 使用 gate 的形状和默认值创建一个新的 Tensor 实例
-    OP::silu(&mut temp_gate, gate); // 将 SiLU 的结果存储在临时变量中
-    *gate = temp_gate; // 将临时变量的值赋回 gate
-
-    // 5. 手动实现 gate * up 的逐元素乘法操作
-    unsafe {
-        let gate_data = gate.data_mut(); // 获得可变数据的引用
-        let up_data = up.data(); // 获得不可变数据的引用
-        for i in 0..gate_data.len() {
-            gate_data[i] *= up_data[i];
-        }
-    }
-
-    // 6. 计算 output = intermediate @ w_down.T
-    OP::matmul_transb(hidden_states, 0.0, gate, w_down, 1.0);
-
-    // 7. 手动实现 residual = output + residual 的逐元素加法操作
-    unsafe {
-        let residual_data = residual.data_mut(); // 获得可变数据的引用
-        let hidden_states_data = hidden_states.data(); // 获得不可变数据的引用
-        for i in 0..residual_data.len() {
-            residual_data[i] += hidden_states_data[i];
-        }
-    }
+    OP::matmul_transb(gate, 0., &hidden_states, w_gate, 1.);
+    matmul_transb(up, 0., &hidden_states, w_up, 1.);
+    OP::silu(up, &gate);
+    matmul_transb(hidden_states, 0., up, w_down, 1.);
+    let residual_ = OP::mat_add(&hidden_states, &residual);
+    OP::copy_mat(residual, &residual_);
 }
 
 #[test]
